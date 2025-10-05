@@ -1,337 +1,428 @@
-		.386p			; Разрешение трансляции всех инструкций 80386
-Gdt_Descriptor	struc			; Шаблон дескpиптоpа GDT
-Seg_Limit       dw	0		; Длина сегмента
-Base_Lo_Word    dw	0		; Младшие 16 бит базового адреса
-Base_Hi_Byte    db	0		; Биты 16..23 базового адреса
-Acces_Rights    db	0		; Байт прав доступа
-		db	0
-Base_Top_Byte   db	0		; Биты 24..31 базового адреса
-Gdt_Descriptor  ends
+;Программа транслируется в COM-файл:
+; TASM demo.asm
+; Tlink demo.obj /t
+.386p
 
-Idt_Descriptor	struc			; Шаблон дескриптора IDT
-Int_Offset	dw	0		; Точка входа в процедуру обработки прерывания
-Int_Selector	dw	0		; Селектор сегмента в GDT
-		db	0
-Access		db	0		; Права доступа
-		dw	0
-Idt_Descriptor	ends
+Gdt_Descriptor STRUC
+  Seg_Limit    dw   0
+  Base_Lo_Word dw   0
+  Base_Hi_Byte db   0
+  Acces_Rights db   0
+               db   0
+  Base_Top_Byte db  0
+Gdt_Descriptor ENDS
 
-Code_Seg_Access	equ	10011011b	; Байт прав доступа дескриптора сегмента кода
-Data_Seg_Access	equ	10010011b	; Байт прав доступа дескриптора сегмента данных
-Disable_Bit20	equ	11011101b	; Код команды 8042 для закрывания линии A20
-Enable_Bit20	equ	11011111b	; Код команды 8042 для открывания линии A20
-Port_A		equ	060h		; Порт A 8042
-Status_port	equ	064h		; Порт состояния 8042
-Cmos_Port	equ	070h		; Адрес порта CMOS-памяти
+Idt_Descriptor STRUC
+  Int_Offset   dw   0
+  Int_Selector dw   0
+               db   0
+  Access       db   0
+               dw   0
+Idt_Descriptor ENDS
 
-; Макро для записи базового адреса сегмента в дескриптор
-FILLDESCR	macro	Seg_Addr, Offset_Addr, Descr
-		xor	edx, edx		; EDX := 0
-		xor	ecx, ecx		; ECX := 0
-		mov	dx, Seg_Addr		; Сегментная часть
-		mov	cx, offset Offset_Addr	; Смещение
-		call	Form_32Bit_Address	; CX:DX := линейный адрес
-; Занесение базового адреса в дескриптор
-		mov	&Descr.Base_Lo_Word, dx
-		mov	&Descr.Base_Hi_Byte, cl
-		mov	&Descr.Base_Top_Byte, ch
-		endm
+Code_Seg_Access  Equ  10011010b
+Data_Seg_Access  Equ  10010010b
+Disable_Bit20    Equ  11011101b
+Enable_Bit20     Equ  11011111b
+Port_A           Equ  060h
+Status_port      Equ  064h
+Cmos_Port        Equ  070h
 
-cseg		SEGMENT Para USE16 public 'code'
-assume		cs: cseg, ds: cseg
-		org	100h
-Start:		jmp	Main
+FILLDESCR MACRO Seg_Addr,Offset_Addr,Descr
+    xor   edx,edx
+    xor   ecx,ecx
+    mov   dx,Seg_Addr
+    mov   cx,offset Offset_Addr
+    call  Form_32Bit_Address
+    mov   &Descr.Base_Lo_Word,dx
+    mov   &Descr.Base_Hi_Byte,cl
+    mov   &Descr.Base_Top_Byte,ch
+ENDM
 
-; Глобальная дескрипторная таблица GDT
-		even
-Gdt		label	word
-; Дескриптор, описывающий саму таблицу GDT
-Gdt_Desc	equ	$ - gdt		; Селектор дескриптора
-Gdt1		Gdt_Descriptor <gdt_leng,,,data_seg_access,>
-; Дескриптор, описывающий сегмент Cseg как кодовый
-Cs_Code		equ	$ - gdt		; Селектор дескриптора
-Gdt2		Gdt_Descriptor<cseg_leng,,,code_seg_access,>
-;** Дескриптор, описывающий Cseg как сегмент данных
-; с пределом 0FFFEh. Он будет использоваться также
-; в роли стекового
-Cs_Data		equ	$ - gdt		; Селектор дескриптора
-Gdt3		Gdt_Descriptor<cseg_leng,,,data_seg_access,>
-; Дескриптор, описывающий таблицу IDT
-Idt_Pointer	Gdt_Descriptor<idt_leng-1,,,data_seg_access>
-; Дескриптор, описывающий таблицу IDT реального
-; режима
-Idt_Real	Gdt_Descriptor<3FFh,,,data_seg_access>
-; Дескриптор, описывающий сегмент видеопамяти
-Video_Desc	equ	$-gdt		; Селектор дескриптора
-GdtB800		Gdt_Descriptor<1000h,8000h,0bh,data_seg_access>
-Gdt_Leng	equ	$-gdt		; Длина таблицы GDT
+CSEG    SEGMENT  Para USE16 public 'code'
+        ASSUME  cs:Cseg,ds:Cseg
+        ORG     100h
+Start:
+        jmp     Main
 
-; Таблица дескрипторов прерываний IDT.
-		even
-Idt		label	word
-ex0		Idt_Descriptor<offset ex0_proc,cs_code,0,10000111b,0>
-ex1		Idt_Descriptor<offset ex1_proc,cs_code,0,10000111b,0>
-ex2		Idt_Descriptor<offset ex2_proc,cs_code,0,10000110b,0>
-ex3		Idt_Descriptor<offset ex3_proc,cs_code,0,10000111b,0>
-ex4		Idt_Descriptor<offset ex4_proc,cs_code,0,10000111b,0>
-ex5		Idt_Descriptor<offset ex5_proc,cs_code,0,10000111b,0>
-ex6		Idt_Descriptor<offset ex6_proc,cs_code,0,10000111b,0>
-ex7		Idt_Descriptor<offset ex7_proc,cs_code,0,10000111b,0>
-ex8		Idt_Descriptor<offset ex8_proc,cs_code,0,10000111b,0>
-ex9		Idt_Descriptor<offset ex9_proc,cs_code,0,10000111b,0>
-ex10		Idt_Descriptor<offset ex10_proc,cs_code,0,10000111b,0>
-ex11		Idt_Descriptor<offset ex11_proc,cs_code,0,10000111b,0>
-ex12		Idt_Descriptor<offset ex12_proc,cs_code,0,10000111b,0>
-ex13		Idt_Descriptor<offset ex13_proc,cs_code,0,10000111b,0>
-ex14		Idt_Descriptor<offset ex14_proc,cs_code,0,10000111b,0>
-ex15		Idt_Descriptor<offset ex15_proc,cs_code,0,10000111b,0>
-ex16		Idt_Descriptor<offset ex16_proc,cs_code,0,10000111b,0>
-		Idt_Descriptor	10	dup(<>)
-ex27		Idt_Descriptor<offset ex27_proc,cs_code,0,10000111b,0>
-		Idt_Descriptor	10	dup(<>)
-Int39		Idt_Descriptor<offset int10_proc,cs_code,0,10000110b,0>
-Idt_Leng	equ	$ - Idt			; Длина таблицы IDT
+EVEN
+Gdt     label   word
+Gdt_Desc        EQU $-gdt
+Gdt1    Gdt_Descriptor <gdt_leng,,,data_seg_access,>
 
-strOffset	dw	6
-eaxInfo		db	'EAX = ????????$'
-ebxInfo		db	'EBX = ????????$'
-ecxInfo		db	'ECX = ????????$'
-edxInfo		db	'EDX = ????????$'
-esiInfo		db	'ESI = ????????$'
-ediInfo		db	'EDI = ????????$'
+Cs_Code         EQU $-gdt
+Gdt2    Gdt_Descriptor<cseg_leng,,,code_seg_access,>
 
-Len		dw	14
-Gate_Failure	db	'Error open A20$'
+Cs_Data         EQU $-gdt
+Gdt3    Gdt_Descriptor<cseg_leng,,,data_seg_access,>
 
-Main:		FillDescr cs, Gdt, Gdt1		; Формирование
-						; 32-разрядного адреса из CS:GDT и запись его
-						; в дескриптор с номером Gdt_Desc
-		FillDescr cs, 0, gdt2		; Дескриптор Cs_Code
-						; указывает на CSEG как на кодовый сегмент.
-		FillDescr cs, 0, gdt3		; Дескриптор Cs_Data
-						; указывает на CSEG как на сегмент данных
-		FillDescr cs, Idt, Idt_Pointer	; Дескриптор Idt_Pointer указывает на IDT.
+Idt_Pointer     Gdt_Descriptor<idt_leng-1,,,data_seg_access>
 
-		cli				; Запрет прерываний
-		mov	al, 8fh			; Запрет немаскируемых
-		out	cmos_port, al		; прерываний
-		jmp	short $ + 2
-		mov	al, 5
-		out	cmos_port + 1, al
-		mov	ah, Enable_Bit20	; Открываем
-		call	Gate_A20		; адресную линию A20
-		or	al, al			; Если произошла
-		jz	A20_Opened		; ошибка, то выдать
-		mov	dx, offset Gate_Failure	; сообщение
-		mov	ah, 9			; на экран
-		int	21h
-		sti				; разрешить прерывания
-		int	20h			; вернуться в DOS
-A20_Opened:	lea	di, Real_CS		; Сохранение сегмента
-		mov	word ptr cs:[di],cs	; кода для перехода в реальный режим
-		lgdt	Gdt1			; Загрузка GDTR
-		lidt	Idt_Pointer		; Загрузка IDTR
-		mov	eax, cr0		; Переходим в защищенный
-		or	eax, 1			; режим, устанавливая
-		mov	cr0, eax		; бит 0 в регистре CR0
-		db	0EAh			; Дальний переход
-		dw	offset Protect		; с непосредственным
-		dw	Cs_Code			; операндом
+Idt_Real        Gdt_Descriptor<3FFh,,,data_seg_access>
 
-; Работа в защищенном режиме
-Protect:	mov	ax, Cs_Data
-		mov	ss, ax		; Регистры DS, ES и SS
-		mov	ds, ax		; содержат селектор
-		mov	es, ax		; сегмента Cs_Data
+Video_Desc      EQU $-gdt
+GdtB800         Gdt_Descriptor<1000h,8000h,0bh,data_seg_access>
 
-		mov	dx, 0101h	; координаты левого верхнего угла вывода
-		int	27		; Вызов прерывания
+Gdt_Leng        EQU $-gdt
 
-		cli
-		mov	eax, cr0	; Переходим в реальный
-		and	eax, 0FFFEh	; режим, сбрасывая бит 0
-		mov	cr0, eax	; регистра CR0
-		db	0EAh		; Дальний переход с
-		dw	offset Real	; непосредственным
-Real_CS		dw	?		; операндом
+EVEN
+Idt     label   word
+; 16-bit Interrupt Gate: 10000110b = 86h
+ex0     Idt_Descriptor<offset ex0_proc,cs_code,0,86h,0>
+ex1     Idt_Descriptor<offset ex1_proc,cs_code,0,86h,0>
+ex2     Idt_Descriptor<offset ex2_proc,cs_code,0,86h,0>
+ex3     Idt_Descriptor<offset ex3_proc,cs_code,0,86h,0>
+ex4     Idt_Descriptor<offset ex4_proc,cs_code,0,86h,0>
+ex5     Idt_Descriptor<offset ex5_proc,cs_code,0,86h,0>
+ex6     Idt_Descriptor<offset ex6_proc,cs_code,0,86h,0>
+ex7     Idt_Descriptor<offset ex7_proc,cs_code,0,86h,0>
+ex8     Idt_Descriptor<offset ex8_proc,cs_code,0,86h,0>
+ex9     Idt_Descriptor<offset ex9_proc,cs_code,0,86h,0>
+ex10    Idt_Descriptor<offset ex10_proc,cs_code,0,86h,0>
+ex11    Idt_Descriptor<offset ex11_proc,cs_code,0,86h,0>
+ex12    Idt_Descriptor<offset ex12_proc,cs_code,0,86h,0>
+ex13    Idt_Descriptor<offset ex13_proc,cs_code,0,86h,0>
+ex14    Idt_Descriptor<offset ex14_proc,cs_code,0,86h,0>
+ex15    Idt_Descriptor<offset ex15_proc,cs_code,0,86h,0>
+ex16    Idt_Descriptor<offset ex16_proc,cs_code,0,86h,0>
 
-; Работа в реальном режиме.
-Real:		lidt	Idt_Real	; Загружаем регистр IDTR
-					; для работы в реальном режиме
-		mov	dx, cs			; Восстанавливаем
-		mov	ds, dx			; сегментные
-		mov	ss, dx			; регистры
-		mov	ah, Disable_Bit20	; Закрытие адресной
-		call	Gate_A20		; линии A20
-		sti				; Разрешение прерываний
-		int	20h		; Выход в DOS
-ex0_proc:	iret			; Обработчики особых
-ex1_proc:	iret			; ситуаций
-ex2_proc:	iret			; Здесь установлены
-ex3_proc:	iret			; заглушки вместо
-ex4_proc:	iret			; обработчиков
-ex5_proc:	iret
-ex6_proc:	iret
-ex7_proc:	iret
-ex8_proc:	iret
-ex9_proc:	iret
-ex10_proc:	iret
-ex11_proc:	iret
-ex12_proc:	iret
-ex13_proc:	iret
-ex14_proc:	iret
-ex15_proc:	iret
-ex16_proc:	iret
+        Idt_Descriptor 22 dup(<>)
+Int39   Idt_Descriptor<offset int10_proc,cs_code,0,86h,0>
+Idt_Leng        EQU $-Idt
 
-; **************************************************
-; Обработчик прерывания INT 27d, выполняющий вывод 
-; содержимого 32-разрядного регистра на экран в 
-; шестнадцатеричном виде и вывести с его помощью 
-; содержимое нескольких регистров друг под другом. 
-; Координаты вывода указываются при вызове данного 
-; прерывания в регистрах:
-; 	DL - строка экрана
-; 	DH - колонка экрана.
-; **************************************************
-ex27_proc:	push	es
-		push	Video_Desc
-		pop	es		; ES = Video_Desc
-		push	dx
-		mov	dh, 0fh		; очищаем экран
-		call	Paint_Screen
+Mess            db  'Protected Mode$'
+Gate_Failure    db  "Error open A20$"
 
-		pop	dx
-		mov	ax, Cs_Data
-		mov	ds, ax
-		lea	bx, eaxInfo
-		int	39
+GPF_Title       db  "General Protection Fault (Int 13)$"
+GPF_Code_Msg    db  "Error Code: $"
+GPF_EXT_Msg     db  "EXT bit: $"
+GPF_TI_Msg      db  "TI bit: $"
+GPF_IDT_Msg     db  "IDT bit: $"
+GPF_Index_Msg   db  "Selector Index: $"
+Hex_Digits      db  "0123456789ABCDEF"
 
-		pop	es
-		iret
+Main:
+        FillDescr  cs,Gdt,Gdt1
+        FillDescr  cs,0,gdt2
+        FillDescr  cs,0,gdt3
+        FillDescr  cs,Idt,Idt_Pointer
 
-; **************************************************
-; Управление прохождением сигнала A20
-; ВХОД: (AH)=0DDH установить A20 всегда равным нулю
-;       (AH)=0DFh открыть адресный разряд A20
-; ВЫХОД: (AL)=0 8042 принял команду
-;        (AH)=2 сбой
-; *************************************************
-Gate_A20	proc
-		cli			; Запрет прерываний
-		call	Empty_8042
-		jnz	Gate_1
-		mov	al, 0d1h	; Выдаем команду 8042 для
-		out	Status_Port, al	; записи в выходной порт
-		call	Empty_8042
-		jnz	Gate_1
-		mov	al, ah		; Записываем в порт A 8042
-		out	Port_A, al	; код команды
-		call	Empty_8042
-Gate_1:		ret
-Gate_A20	endp
+        cli
+        mov   al,8fh
+        out   cmos_port,al
+        jmp   short $+2
+        mov   al,5
+        out   cmos_port+1,al
 
-; *************************************************
-; Ждать пока буфер 8042 не опустеет
-; Вход: нет
-; Выход:(AL)=0 буфер пуст
-; (AL)=2 не пуст
-; **************************************************
-Empty_8042	proc
-		push	cx
-		xor	cx, cx		; CX = 0 (256 повторений)
-Empty_1:	in	al, Status_Port	; Порт 8042
-		and	al, 00000010b	; Бит 2 очищен ?
-		loopnz	Empty_1
-		pop	cx
-		ret
-Empty_8042	endp
+        mov   ah,Enable_Bit20
+        call  Gate_A20
+        or    al,al
+        jz    A20_Opened
+        mov   dx,offset Gate_Failure
+        mov   ah,9
+        int   21h
+        sti
+        int   20h
 
-; **************************************************
-; Формирование 32-разрядного адреса
-; Вход: CX:DX - адрес в формате <сегмент: смещение>
-; Выход: CX:DX - 32-разрядный линейный адрес
-Form_32Bit_Address proc
-		shl	edx, 4
-		add	edx, ecx
-		mov	ecx, edx
-		shr	ecx, 16
-		ret
-Form_32Bit_Address endp
+A20_Opened:
+        lea   di,Real_CS
+        mov   word ptr cs:[di],cs
 
-; **************************************************
-; Процедура вывода строки на экран, работает
-; в качестве обработчика прерывания.
-; Вход : DS:BX - адрес сообщения
-; DL - строка экрана
-; DH - колонка экрана
-; **************************************************
-Int10_Proc	proc	Near		; Обработчик прерывания
-		pusha			; INT 39d
-		xor	cx, cx		; Очистка CX
-		mov	cl, dh		; CL = колонка
-		sal	cl, 1		; CL = CL*2
-		xor	dh, dh		; DX = строка
-		imul	dx, 160		; Умножаем на число байт в строке
-		add	dx, cx		; Прибавляем смещение в строке
-					; Результат: DX = смещение в видеопамяти
-		push	Video_Desc
-		pop	es		; ES = сегмент видеопамяти
-		mov	di, dx		; DI = смещение в этом сегменте
-m:		mov	ax, [bx]	; AL = очередной символ строки
-		cmp	al, '$'		; Конец строки ?
-		jz	Ex		; Да - выход
-		mov	cx, es:[di]	; Получить атрибут в CH
-		mov	ah, ch		; AX = символ с атрибутом
-		stosw			; Записать символ в видеопамять
-		inc	bx		; Перейти к следующему символу
-		jmp	short m
-ex:		popa
-		iret			; Возврат из прерывания
-Int10_Proc	endp
+        lgdt  Gdt1
+        lidt  Idt_Pointer
+        mov   eax,cr0
+        or    eax,1
+        mov   cr0,eax
 
-; **************************************************
-; Процедура выполняющая какие-либо действия
-;  в защищенном режиме
-; *************************************************
-MY_PROC		proc
-		pusha
-		push	es
-		push	Video_Desc	; В регистр ES заносим
-		pop	es		; селектор сегмента видеопамяти
-		mov	dh, 0fh		; Очищаем экран
-		call	Paint_Screen
-		mov	ax, Cs_Data
-		mov	ds, ax		; DS - сегмент данных
-		; lea	bx, Mess	; Адрес сообщения
-		mov	dx, 200Bh	; Координаты вывода
-		int	39		; Вывод строки на экран
-		pop	es
-		popa
-		ret
-MY_PROC		endp
+        db    0EAh
+        dw    offset Protect
+        dw    Cs_Code
 
-; **************************************************
-; Процедура очищает экран и устанавливает цвета
-; в соответствии с заданным атрибутом.
-; Вход : ES - селектор дескриптора текстового
-; видеобуфера, DH - атрибут.
-; **************************************************
-Paint_Screen	proc
-		push	cx si di es
-		mov	cx, 80 * 25	; Размер видеопамяти (слов)
-		xor	si, si		; SI и DI установим на
-		xor	di, di		; начало видеопамяти
-Paint1:		lodsw			; Увеличиваем смещение
-					; в видеопамяти
-		mov	ah, dh		; Байт атрибута символа
-		mov	al, 20h		; Код символа "ПРОБЕЛ"
-		stosw			; Записываем символ с атрибутом
-					; в видеопамять
-		loop	Paint1		; Повторить для каждого
-					; символа на экране
-		pop	es di si cx
-		ret
-Paint_Screen	endp
-Cseg_Leng	equ	$		; Длина сегмента Cseg
-cseg		ends
-		end	Start
+Protect:
+        mov   ax,Cs_Data
+        mov   ss,ax
+        mov   ds,ax
+        mov   es,ax
+        call  My_Proc
+
+        cli
+        mov   eax,cr0
+        and   eax,0FFFFFFFEh
+        mov   cr0,eax
+
+        db    0EAh
+        dw    offset Real
+Real_CS dw    ?
+
+Real:
+        lidt  Idt_Real
+        mov   dx,cs
+        mov   ds,dx
+        mov   ss,dx
+        mov   ah,Disable_Bit20
+        call  Gate_A20
+        sti
+        int   20h
+
+ex0_proc:  iret
+ex1_proc:  iret
+ex2_proc:  iret
+ex3_proc:  iret
+ex4_proc:  iret
+ex5_proc:  iret
+ex6_proc:  iret
+ex7_proc:  iret
+ex8_proc:  iret
+ex9_proc:  iret
+ex10_proc: iret
+ex11_proc: iret
+ex12_proc: iret
+
+ex13_proc PROC NEAR
+        cli
+        pusha
+        push  ds
+        push  es
+
+        mov   ax, Cs_Data
+        mov   ds, ax
+        mov   ax, Video_Desc
+        mov   es, ax
+
+        ; Очистить экран
+        mov   cx, 2000
+        xor   di, di
+        mov   ax, 0F20h
+        cld
+        rep   stosw
+
+        ; Получить код ошибки
+        mov   bp, sp
+        mov   di, [bp+20]  
+
+        ; Строка 2: "General Protection Fault (Int 13)"
+        mov   si, offset GPF_Title
+        mov   bx, 160*2 + 20
+        call  Print_String_SI 
+
+        ; Строка 4: "Error Code: FFFC"
+        mov   si, offset GPF_Code_Msg
+        mov   bx, 160*4 + 20
+        call  Print_String_SI 
+        
+        mov   ax, di
+        mov   bx, 160*4 + 60
+        call  Print_Hex_Word 
+
+        ; Строка 6: "EXT bit: 0"
+        mov   si, offset GPF_EXT_Msg
+        mov   bx, 160*6 + 20
+        call  Print_String_SI 
+        
+        mov   ax, di
+        and   ax, 1
+        add   al, '0'
+        mov   ah, 0Fh     
+        mov   es:[160*6 + 50], ax
+
+        ; Строка 8: "TI bit: 0"
+        mov   si, offset GPF_TI_Msg
+        mov   bx, 160*8 + 20
+        call  Print_String_SI 
+        
+        mov   ax, di
+        shr   ax, 1
+        and   ax, 1
+        add   al, '0'
+        mov   ah, 0Fh      
+        mov   es:[160*8 + 48], ax
+
+        ; Строка 10: "IDT bit: 1"
+        mov   si, offset GPF_IDT_Msg
+        mov   bx, 160*10 + 20
+        call  Print_String_SI 
+        
+        mov   ax, di
+        shr   ax, 2
+        and   ax, 1
+        add   al, '0'
+        mov   ah, 0Fh      
+        mov   es:[160*10 + 52], ax
+
+        ; Строка 12: "Selector Index: 1FFF"
+        mov   si, offset GPF_Index_Msg
+        mov   bx, 160*12 + 20
+        call  Print_String_SI 
+        
+        mov   ax, di
+        shr   ax, 3
+        mov   bx, 160*12 + 68
+        call  Print_Hex_Word 
+
+Hang:   jmp   Hang
+
+        pop   es
+        pop   ds
+        popa
+        add   sp, 2
+        sti
+        iret
+ex13_proc ENDP
+
+ex14_proc: iret
+ex15_proc: iret
+ex16_proc: iret
+
+Print_String_SI PROC NEAR
+        push  ax
+        push  bx
+        push  si
+PS_Loop:
+        lodsb
+        cmp   al, '$'
+        je    PS_Done
+        mov   ah, 0Fh
+        mov   es:[bx], ax
+        add   bx, 2
+        jmp   PS_Loop
+PS_Done:
+        pop   si
+        pop   bx
+        pop   ax
+        ret
+Print_String_SI ENDP
+
+Print_Hex_Word PROC NEAR
+        push  ax
+        push  bx
+        push  cx
+        push  dx
+        
+        mov   cx, 4
+PHW_Loop:
+        rol   ax, 4
+        push  ax
+        and   ax, 0Fh
+        cmp   al, 10
+        jb    PHW_Digit
+        add   al, 7
+PHW_Digit:
+        add   al, '0'
+        mov   ah, 0Fh
+        mov   es:[bx], ax
+        add   bx, 2
+        pop   ax
+        loop  PHW_Loop
+        
+        pop   dx
+        pop   cx
+        pop   bx
+        pop   ax
+        ret
+Print_Hex_Word ENDP
+
+Gate_A20 PROC
+        cli
+        call  Empty_8042
+        jnz   Gate_1
+        mov   al,0d1h
+        out   Status_Port,al
+        call  Empty_8042
+        jnz   Gate_1
+        mov   al,ah
+        out   Port_A,al
+        call  Empty_8042
+Gate_1:
+        ret
+Gate_A20 ENDP
+
+;************************************************
+Empty_8042 PROC
+        push  cx
+        xor   cx,cx
+Empty_1:
+        in    al,Status_Port
+        and   al,00000010b
+        loopnz Empty_1
+        pop   cx
+        ret
+Empty_8042 ENDP
+
+;************************************************
+Form_32Bit_Address PROC
+        shl   edx,4
+        add   edx,ecx
+        mov   ecx,edx
+        shr   ecx,16
+        ret
+Form_32Bit_Address ENDP
+
+;************************************************
+Int10_Proc PROC Near
+        pusha
+        xor   cx,cx
+        mov   cl,dh
+        sal   cl,1
+        xor   dh,dh
+        imul  dx,160d
+        add   dx,cx
+        push  Video_Desc
+        pop   es
+        mov   di,dx
+m:
+        mov   ax,[bx]
+        cmp   al,'$'
+        jz    Ex
+        mov   cx,es:[di]
+        mov   ah,ch
+        stosw
+        inc   bx
+        jmp   short m
+Ex:
+        popa
+        iret
+Int10_Proc Endp
+
+;************************************************
+MY_PROC PROC
+        pusha
+        push  es
+        push  Video_Desc
+        pop   es
+        mov   dh,0fh
+        call  Paint_Screen
+
+        mov   ax,Cs_Data
+        mov   ds,ax
+        lea   bx,Mess
+        mov   dx,200Bh
+        int   39d
+
+        ; ГЕНЕРАЦИЯ ИСКЛЮЧЕНИЯ 13
+        mov   ax, 0FFFFh
+        mov   ds, ax            ; Попытка загрузить несуществующий селектор
+
+        pop   es
+        popa
+        ret
+MY_PROC ENDP
+
+;************************************************
+PAINT_SCREEN PROC
+        push  cx si di es
+        mov   cx,80*25
+        xor   si,si
+        xor   di,di
+Paint1:
+        lodsw
+        mov   ah,dh
+        mov   al,20h
+        stosw
+        loop  Paint1
+        pop   es di si cx
+        RET
+PAINT_SCREEN ENDP
+
+Cseg_Leng       Equ  $
+Cseg            Ends
+                End  Start
