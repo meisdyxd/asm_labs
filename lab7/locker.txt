@@ -1,0 +1,182 @@
+PROGRAM segment
+ assume CS:PROGRAM
+ org 100h;пропуск PSP для COM-программы
+Start: jmp InitProc; переход на инициализацию
+;Р Е З И Д Е Н Т Н Ы Е Д А Н Н Ы Е
+FuncNum equ 0EEh;несуществующая функция
+ ;прерывания BIOS Int16h
+CodeOut equ 2D0Ch
+;код, возвращаемый нашим обработчиком Int16h
+TestInt09 equ 9D0Ah; слово перед Int09h
+TestInt16 equ 3AFAh; слово перед Int16h
+OldInt09 label dword; сохраненный вектор
+Int09h:
+ OfsInt09 dw ? ; его смещение
+ SegInt09 dw ? ; и сегмент
+OldInt16 label dword; сохраненный вектор
+Int16h:
+ OfsInt16 dw ? ; его смещение
+ SegInt16 dw ? ; и сегмент
+OK_Text db 0 ; признак гашения экрана
+Sign db ? ; количество нажатий Ctrl
+VideoLen equ 800h ; длина видеобуфера
+VideoBuf db 160 dup(' ')
+db 13 dup(' ')
+db '??????????????????????????????????????????????????????'
+db 26 dup(' ')
+db '? ?'
+db 26 dup(' ')
+db '? Для разблокировки нажмите три раза LeftControl ?'
+db 26 dup(' ')
+db '? ?'
+db 26 dup(' ')
+db '? ?'
+db 26 dup(' ')
+db '??????????????????????????????????????????????????????'
+db 2000 dup(' ')
+AttrBuf db VideoLen dup(07h); атрибуты экрана
+VideoBeg dw 0B800h; адрес начала видеообласти
+VideoOffs dw ?; смещение активной страницы
+CurSize dw ?;сохраненный размер курсора
+; Р Е З И Д Е Н Т Н Ы Е П Р О Ц Е Д У Р Ы
+;ПОДПРОГРАММА ОБМЕНА ВИДЕООБЛАСТИ С БУФЕРОМ
+;ПРОГРАММЫ
+VideoXcg proc
+ lea DI,VideoBuf; в DI - адрес буфера символов
+ lea SI,AttrBuf; в SI - адрес буфера атрибутов
+ mov AX,VideoBeg; в ES - сегментный адрес
+ mov ES,AX; начала видеообласти
+ mov CX,VideoLen; в CX - длина видеобуфера
+ mov BX,VideoOffs; в BX - нач. смещение строки
+Draw:
+ mov AX,ES:[BX]; обменять символ/атрибут
+ xchg AH,DS:[SI]; на экране с символом и
+ ; атрибутом
+ xchg AL,DS:[DI]; из буферов
+ mov ES:[BX],AX;
+ inc SI;? увеличить адрес
+ inc DI;? в буферах
+ inc BX;? увеличить адрес
+ inc BX;? в видеобуфере
+ loop Draw; делать для всей видеообласти
+ ret ;возврат
+VideoXcg endp
+;ОБРАБОТЧИК ПРЕРЫВАНИЯ Int09h (ПРЕРЫВАНИЕ ОТ
+; КЛАВИАТУРЫ)
+ dw TestInt09; слово для обнаружения перехвата
+Int09Hand proc
+ push AX ;?
+ push BX ;?
+ push CX ;?сохранить
+ push DI ;?используемые
+ push SI ;?регистры
+ push DS ;?
+ push ES ;?
+ push CS ;?указать DS на
+ pop DS ;?нашу программу
+ in AL,60h; получить скан код нажатой клавиши
+ cmp AL,26h; проверить на скан-код клавиши
+ jne Exit_09; <L> и выйти, если не он
+ xor AX,AX ;
+ mov ES,AX ; проверить флаги клавиатуры на
+ mov AL,ES:[418h]; нажатие <Ctrl+Alt>
+ and AL,03h ;
+ cmp AL,03h ;
+ je Cont ;
+ Exit_09:
+ jmp Exit09 ;выход
+ Cont:
+ sti ;разрешить прерывания
+ mov AH,0Fh ;?получить текущий
+ int 10h ;?видеорежим
+ cmp AL,2 ;?
+ je InText ;?перейти на InText
+ cmp AL,3 ;?если режим
+ je InText ;?текстовый 80#25
+ cmp AL,7 ;?
+ je InText ;?
+ jmp short SwLoop1 ;иначе - пропустить
+ InText:
+ xor AX,AX ;?установить сегментный
+ mov ES,AX ;?адрес в 0000h
+ mov AX,ES:[44Eh] ;?получить смещение активной
+ mov VideoOffs,AX ;?страницы в VideoOffs
+ mov AX,ES:[44Ch] ;?сравнить длину видеобуфера
+ cmp AX,1000h ;?с 1000h.Если не равно,
+ jne Exit009 ;?то режим EGA Lines
+ ;?(экран тушить не надо)
+ mov AH,03h ;?иначе сохранить
+ int 10h ;?размер курсора
+ mov CurSize,CX ;?в CurSize
+ mov AH,01h ;?
+ mov CH,20h ;?и подавить его
+ int 10h ;?
+ mov OK_Text,01h; установить признак гашения
+ ; экрана
+ call VideoXcg ;и вызвать процедуру гашения
+ SwLoop1:
+ in AL,60h; в AL - код нажатой клавиши
+ cmp AL,1Dh; ? если нажата Ctrl - то на
+ je SwLoop2;?проверку отпускания
+ cmp AL,9Dh; ?если была отпущена Ctrl, то
+ je SwLoop1;?дальше на опрос клавиатуры
+ mov Sign,0 ;иначе сбросить кол-во нажатий
+ jmp short SwLoop1;и снова на опрос клавиатуры
+ SwLoop2:
+ in AL,60h; в AL - скан код клавиши
+ cmp AL,9Dh; ?если не код отпускания Ctrl, то
+ jne SwLoop2;?ожидать отпускания клавиши
+ inc Sign; увеличить кол-во нажатий на Ctrl
+ cmp Sign,3; ?если еще не нажали 3 раза, то
+ jne SwLoop1;?перейти на опрос клавиатуры
+ mov Sign,0;сбросить кол-во нажатий на Ctrl
+ cmp OK_Text,01h;?если экран не был выключен,
+ jne Exit009 ;?то выход
+ call VideoXcg ;иначе включить экран
+ mov AH,01h ;?
+ mov CX,CurSize; ?восстановить курсор
+ int 10h ;?
+mov OK_Text,0h;сбросить признак гашения экрана
+ Exit009:
+ xor AX, AX ;?
+ mov ES, AX ;?очистить флаги нажатия
+ mov AL,ES:[417h];?<Control+Alt> по адресу
+ and AL,11110011b;?0000h:0417h и флаги
+ mov ES:[417h],AL;?<LeftControl+LeftAlt>
+ mov AL,ES:[418h];?по адресу 0000h:0418h
+ and AL,11111100b;?
+ mov ES:[418h],AL;?
+ mov AL,20h ;?обслужить контроллер
+ out 20h,AL ;?прерываний
+ cli ;запретить прерывания
+ pop ES ;?
+ pop DS ;?
+ pop SI ;?восстановить
+ pop DI ;?используемые
+ pop CX ;?регистры
+ pop BX ;?
+ pop AX ;?
+ iret ;выйти из прерывания
+ Exit09: cli ;запретить прерывания
+ pop ES ;?
+ pop DS ;?
+ pop SI ;?восстановить
+ pop DI ;?используемые
+ pop CX ;?регистры
+ pop BX ;?
+ pop AX ;?
+jmp CS:OldInt09;?;передать управление
+; "по цепочке" следующему обработчику Int09h
+Int09Hand endp
+;ОБРАБОТЧИК ПРЕРЫВАНИЯ Int16h (ВИДЕО ФУНКЦИИ
+;BIOS)
+ dw TestInt16; слово для обнаружения перехвата
+Presense proc
+ cmp AH,FuncNum; обращение от нашей программы?
+ jne Pass; если нет то ничего не делать
+ mov AX,CodeOut; иначе в AX условленный код
+ iret ;и возвратиться
+Pass: jmp CS:OldInt16 ;передать управление
+;"по цепочке";следующему обработчику Int16h
+Presense endp
+ end Start
